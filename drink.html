@@ -1,538 +1,350 @@
-<!DOCTYPE html>
-<html lang="zh-Hant">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>TasteMaster Pro - 燒酎清酒筆記</title>
-    <!-- PWA Meta Tags -->
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#4f46e5">
-    
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- React & ReactDOM -->
-    <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
-    
-    <!-- Prop-Types -->
-    <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
-    
-    <!-- Recharts -->
-    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
-    
-    <!-- Babel for JSX -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { 
+  Plus, User, Trophy, Clipboard, Image as ImageIcon, Star, 
+  ChevronLeft, ChevronDown, Camera, X, Share2, Globe, Flame, Wine, Droplets, Beer
+} from 'lucide-react';
+import { 
+  Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer 
+} from 'recharts';
+import { initializeApp } from 'firebase/app';
+import { 
+  getFirestore, collection, addDoc, query, onSnapshot, 
+  doc, setDoc, updateDoc, orderBy 
+} from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 
-    <link rel="manifest" href='data:application/manifest+json,{"name":"TasteMaster Pro","short_name":"TasteMaster","start_url":".","display":"standalone","background_color":"#ffffff","theme_color":"#4f46e5","icons":[{"src":"https://cdn-icons-png.flaticon.com/512/931/931935.png","sizes":"512x512","type":"image/png"}]}'>
+// Firebase 配置 (由環境提供)
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'sake-tasting-app';
 
-    <style>
-        body { -webkit-tap-highlight-color: transparent; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        input[type="range"] { -webkit-appearance: none; background: transparent; }
-        input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            height: 20px; width: 20px;
-            border-radius: 50%; background: #4f46e5;
-            cursor: pointer; margin-top: -8px;
-            box-shadow: 0 0 10px rgba(79, 70, 229, 0.3);
-        }
-        input[type="range"]::-webkit-slider-runnable-track {
-            width: 100%; height: 4px;
-            background: #e2e8f0; border-radius: 2px;
-        }
-        .modal-enter { animation: slideUp 0.3s ease-out forwards; }
-        @keyframes slideUp {
-            from { transform: translateY(100%); }
-            to { transform: translateY(0); }
-        }
-        .fade-in { animation: fadeIn 0.3s ease-in forwards; }
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-    </style>
-</head>
-<body class="bg-slate-50 text-slate-900">
-    <div id="root"></div>
+// 品飲模板參數定義
+const TEMPLATES = {
+  '清酒': {
+    icon: <Droplets size={14} />,
+    color: 'blue',
+    flavorKeys: ['甘', '酸', '苦', '旨', '澀']
+  },
+  '燒酎': {
+    icon: <Flame size={14} />,
+    color: 'orange',
+    flavorKeys: ['香氣', '醇厚', '餘韻', '刺激', '清爽']
+  },
+  '威士忌': {
+    icon: <Beer size={14} />,
+    color: 'amber',
+    flavorKeys: ['泥煤', '果香', '辛辣', '木質', '甜度']
+  },
+  '葡萄酒': {
+    icon: <Wine size={14} />,
+    color: 'purple',
+    flavorKeys: ['單寧', '酸度', '果味', '酒體', '平衡']
+  }
+};
 
-    <script type="text/babel">
-        const { useState, useMemo, useRef, useEffect } = React;
-        const { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer } = window.Recharts || {};
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [records, setRecords] = useState([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isSavedNotify, setIsSavedNotify] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  
+  // 表單狀態
+  const [category, setCategory] = useState('清酒');
+  const [brand, setBrand] = useState('');
+  const [brewery, setBrewery] = useState('');
+  const [images, setImages] = useState([]);
+  const [flavorValues, setFlavorValues] = useState({ 1: 3, 2: 3, 3: 3, 4: 3, 5: 3 });
+  const [note, setNote] = useState('');
+  const [overallRating, setOverallRating] = useState(5);
 
-        // 圖示組件
-        const Icon = ({ name, size = 20, className = "" }) => {
-            useEffect(() => { 
-                if (window.lucide) {
-                    try {
-                        window.lucide.createIcons();
-                    } catch (e) {
-                        console.warn("Lucide icon creation failed", e);
-                    }
-                }
-            }, [name]);
-            return <i data-lucide={name} style={{ width: size, height: size }} className={className}></i>;
-        };
-
-        const SHOCHU_DEFAULTS = {
-            quadrants: ["華酎", "爽酎", "醇酎", "樽酎"],
-            aromas: ["花香", "果香", "原料香", "辛香料", "焦糖香", "煙燻感", "荔枝", "香蕉", "烤地瓜"],
-            methods: ["直球", "加冰", "水割", "蘇打割", "湯割", "前割"]
-        };
-
-        const App = () => {
-            const [records, setRecords] = useState([]);
-            const [isModalOpen, setIsModalOpen] = useState(false);
-            const [isProfileOpen, setIsProfileOpen] = useState(false);
-            const [isSavedNotify, setIsSavedNotify] = useState(false);
-            const [userAvatar, setUserAvatar] = useState(null);
-
-            // 編輯表單狀態
-            const [category, setCategory] = useState('清酒');
-            const [brand, setBrand] = useState('');
-            const [brewery, setBrewery] = useState('');
-            const [images, setImages] = useState([]);
-            const [shochuQuadrants, setShochuQuadrants] = useState([]);
-            const [selectedTags, setSelectedTags] = useState([]);
-            const [selectedMethods, setSelectedMethods] = useState([]);
-            const [sakeFlavor, setSakeFlavor] = useState({ 甘: 3, 酸: 3, 苦: 3, 旨: 3, 澀: 3 });
-            const [note, setNote] = useState('');
-            const [overallRating, setOverallRating] = useState(5);
-
-            // 初始化與讀取存檔
-            useEffect(() => {
-                try {
-                    const saved = localStorage.getItem('tastemaster_records');
-                    if (saved) setRecords(JSON.parse(saved));
-                    
-                    const savedAvatar = localStorage.getItem('tastemaster_avatar');
-                    if (savedAvatar) setUserAvatar(savedAvatar);
-                } catch (e) {
-                    console.error("Failed to load local storage", e);
-                }
-            }, []);
-
-            // 計算 TOP 3 銘柄
-            const topThree = useMemo(() => {
-                const brandMap = {};
-                records.forEach(r => {
-                    const name = r.brand || "未命名銘柄";
-                    if (!brandMap[name]) {
-                        brandMap[name] = { name, total: 0, count: 0, category: r.category };
-                    }
-                    brandMap[name].total += parseFloat(r.overallRating);
-                    brandMap[name].count += 1;
-                });
-
-                return Object.values(brandMap)
-                    .map(b => ({ ...b, avg: (b.total / b.count).toFixed(1) }))
-                    .sort((a, b) => b.avg - a.avg)
-                    .slice(0, 3);
-            }, [records]);
-
-            const resetForm = () => {
-                setBrand('');
-                setBrewery('');
-                setImages([]);
-                setShochuQuadrants([]);
-                setSelectedTags([]);
-                setSelectedMethods([]);
-                setNote('');
-                setOverallRating(5);
-                setSakeFlavor({ 甘: 3, 酸: 3, 苦: 3, 旨: 3, 澀: 3 });
-            };
-
-            const saveRecord = () => {
-                const newRecord = {
-                    id: Date.now(),
-                    date: new Date().toLocaleDateString(),
-                    timestamp: Date.now(),
-                    category, brand, brewery, images,
-                    shochuQuadrants, selectedTags, selectedMethods,
-                    sakeFlavor, note, overallRating
-                };
-                
-                const updated = [newRecord, ...records].slice(0, 500); // 擴大存儲上限
-                setRecords(updated);
-                
-                try {
-                    localStorage.setItem('tastemaster_records', JSON.stringify(updated));
-                } catch (e) {
-                    console.error("Storage failed", e);
-                }
-                
-                setIsModalOpen(false);
-                setIsSavedNotify(true);
-                setTimeout(() => setIsSavedNotify(false), 2000);
-                resetForm();
-            };
-
-            const handleImageChange = (e, target = 'post') => {
-                const files = Array.from(e.target.files);
-                if (files.length === 0) return;
-
-                files.forEach(file => {
-                    const reader = new FileReader();
-                    reader.onloadend = () => {
-                        if (target === 'avatar') {
-                            setUserAvatar(reader.result);
-                            localStorage.setItem('tastemaster_avatar', reader.result);
-                        } else {
-                            setImages(prev => [...prev, reader.result]);
-                        }
-                    };
-                    reader.readAsDataURL(file);
-                });
-                e.target.value = '';
-            };
-
-            const toggleItem = (item, list, setter) => {
-                setter(prev => prev.includes(item) ? prev.filter(i => i !== item) : [...prev, item]);
-            };
-
-            const sakeFlavorData = useMemo(() => 
-                Object.keys(sakeFlavor).map(k => ({ subject: k, A: sakeFlavor[k] })), 
-            [sakeFlavor]);
-
-            return (
-                <div className="max-w-md mx-auto min-h-screen bg-slate-50 relative pb-20 overflow-x-hidden">
-                    {/* --- 主頁面 Header --- */}
-                    <header className="bg-white px-6 py-6 flex justify-between items-end">
-                        <div>
-                            <p className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em] mb-1">TasteMaster Pro</p>
-                            <h1 className="text-2xl font-black text-slate-900">品飲牆</h1>
-                        </div>
-                        <button 
-                            onClick={() => setIsProfileOpen(true)}
-                            className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 overflow-hidden border-2 border-slate-50 active:scale-95 transition-transform"
-                        >
-                            {userAvatar ? (
-                                <img src={userAvatar} className="w-full h-full object-cover" />
-                            ) : (
-                                <Icon name="user" size={20} />
-                            )}
-                        </button>
-                    </header>
-
-                    {/* --- TOP 3 區塊 --- */}
-                    {topThree.length > 0 && (
-                        <section className="px-6 mb-4">
-                            <div className="bg-indigo-900 rounded-3xl p-5 text-white shadow-xl shadow-indigo-200">
-                                <div className="flex items-center gap-2 mb-4">
-                                    <Icon name="trophy" size={16} className="text-amber-400" />
-                                    <h2 className="text-[11px] font-black uppercase tracking-widest opacity-80">個人評分 TOP 3 銘柄</h2>
-                                </div>
-                                <div className="space-y-3">
-                                    {topThree.map((item, index) => (
-                                        <div key={item.name} className="flex items-center justify-between bg-white/10 rounded-xl p-3 backdrop-blur-sm border border-white/5">
-                                            <div className="flex items-center gap-3 min-w-0">
-                                                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black 
-                                                    ${index === 0 ? 'bg-amber-400 text-amber-900' : 
-                                                      index === 1 ? 'bg-slate-300 text-slate-800' : 
-                                                      'bg-orange-400 text-orange-900'}`}>
-                                                    {index + 1}
-                                                </div>
-                                                <div className="truncate">
-                                                    <p className="text-xs font-bold truncate">{item.name}</p>
-                                                    <p className="text-[9px] opacity-60">{item.category}</p>
-                                                </div>
-                                            </div>
-                                            <div className="text-right">
-                                                <p className="text-sm font-black text-amber-400">{item.avg}</p>
-                                                <p className="text-[8px] opacity-50 uppercase font-bold">AVG SCORE</p>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </section>
-                    )}
-
-                    {/* --- 最新評論列表 --- */}
-                    <main className="p-6 space-y-4">
-                        <div className="flex items-center justify-between mb-2">
-                            <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">最近評論</h2>
-                            <span className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-bold">{records.length} 則紀錄</span>
-                        </div>
-
-                        {records.length === 0 ? (
-                            <div className="py-20 text-center space-y-4">
-                                <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto text-slate-300">
-                                    <Icon name="clipboard" size={32} />
-                                </div>
-                                <p className="text-sm text-slate-400 font-medium">還沒有任何筆記，點擊下方按鈕開始！</p>
-                            </div>
-                        ) : (
-                            records.slice(0, 15).map(record => (
-                                <div key={record.id} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 flex gap-4 active:scale-[0.98] transition-transform">
-                                    <div className="w-16 h-16 bg-slate-100 rounded-xl flex-shrink-0 overflow-hidden border border-slate-50">
-                                        {record.images && record.images[0] ? (
-                                            <img src={record.images[0]} className="w-full h-full object-cover" />
-                                        ) : (
-                                            <div className="w-full h-full flex items-center justify-center text-slate-200">
-                                                <Icon name="image" size={20} />
-                                            </div>
-                                        )}
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex justify-between items-start mb-1">
-                                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${record.category === '清酒' ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'}`}>
-                                                {record.category}
-                                            </span>
-                                            <div className="flex items-center gap-0.5 text-amber-400">
-                                                <Icon name="star" size={10} className="fill-current"/>
-                                                <span className="text-[10px] font-black text-slate-700">{record.overallRating}.0</span>
-                                            </div>
-                                        </div>
-                                        <h3 className="text-sm font-bold text-slate-800 truncate">{record.brand || '未命名銘柄'}</h3>
-                                        <p className="text-[10px] text-slate-400 truncate">{record.brewery || '未知酒造'}</p>
-                                        <p className="text-[11px] text-slate-500 mt-2 line-clamp-1 italic">"{record.note || '無評論內容...'}"</p>
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </main>
-
-                    {/* --- 個人頁面 (Profile Page) --- */}
-                    {isProfileOpen && (
-                        <div className="fixed inset-0 z-[60] flex flex-col bg-slate-50 fade-in overflow-y-auto no-scrollbar">
-                            <header className="sticky top-0 bg-white/95 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b z-10">
-                                <button onClick={() => setIsProfileOpen(false)} className="p-2 -ml-2 text-slate-400">
-                                    <Icon name="chevron-left" size={24} />
-                                </button>
-                                <h2 className="font-black text-lg">個人帳戶</h2>
-                                <div className="w-10"></div>
-                            </header>
-
-                            <div className="p-6">
-                                {/* 頭像設定區 */}
-                                <div className="bg-white rounded-[40px] p-8 shadow-sm border border-slate-100 text-center mb-8">
-                                    <div className="relative w-28 h-28 mx-auto mb-4">
-                                        <div className="w-full h-full rounded-full bg-slate-100 overflow-hidden border-4 border-white shadow-lg">
-                                            {userAvatar ? (
-                                                <img src={userAvatar} className="w-full h-full object-cover" />
-                                            ) : (
-                                                <div className="w-full h-full flex items-center justify-center text-slate-300">
-                                                    <Icon name="user" size={48} />
-                                                </div>
-                                            )}
-                                        </div>
-                                        <label className="absolute bottom-0 right-0 w-9 h-9 bg-indigo-600 rounded-full flex items-center justify-center text-white border-4 border-white shadow-md cursor-pointer active:scale-90 transition-transform">
-                                            <Icon name="camera" size={14} />
-                                            <input type="file" className="hidden" accept="image/*" onChange={(e) => handleImageChange(e, 'avatar')} />
-                                        </label>
-                                    </div>
-                                    <h3 className="font-black text-xl text-slate-800">TasteMaster 飲者</h3>
-                                    <p className="text-xs text-slate-400 font-bold mt-1">累積 {records.length} 則紀錄</p>
-                                </div>
-
-                                {/* 全部紀錄列表（新到舊） */}
-                                <div className="space-y-4">
-                                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] mb-4">完整評論歷史</h3>
-                                    {records.map(record => (
-                                        <div key={record.id} className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 flex gap-4">
-                                            <div className="w-20 h-20 bg-slate-50 rounded-2xl flex-shrink-0 overflow-hidden border border-slate-100">
-                                                {record.images && record.images[0] ? (
-                                                    <img src={record.images[0]} className="w-full h-full object-cover" />
-                                                ) : (
-                                                    <div className="w-full h-full flex items-center justify-center text-slate-200">
-                                                        <Icon name="image" size={24} />
-                                                    </div>
-                                                )}
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex justify-between items-start mb-0.5">
-                                                    <span className="text-[9px] text-slate-400 font-black tracking-tighter uppercase">{record.date}</span>
-                                                    <div className="flex items-center gap-0.5 text-amber-400">
-                                                        <Icon name="star" size={10} className="fill-current"/>
-                                                        <span className="text-[10px] font-black text-slate-700">{record.overallRating}.0</span>
-                                                    </div>
-                                                </div>
-                                                <h4 className="text-sm font-bold text-slate-800 truncate">{record.brand || '未命名'}</h4>
-                                                <p className="text-[10px] text-slate-400 truncate mb-2">{record.brewery}</p>
-                                                <div className="flex flex-wrap gap-1">
-                                                    <span className="text-[8px] bg-indigo-50 text-indigo-500 px-1.5 py-0.5 rounded-full font-bold">{record.category}</span>
-                                                    {record.shochuQuadrants?.map(q => <span key={q} className="text-[8px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded-full font-bold">{q}</span>)}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                    {records.length === 0 && <p className="text-center py-10 text-slate-300 text-sm">暫無歷史紀錄</p>}
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* --- 浮動新增按鈕 --- */}
-                    <button 
-                        onClick={() => setIsModalOpen(true)}
-                        className="fixed bottom-8 right-6 w-14 h-14 bg-indigo-600 text-white rounded-full shadow-2xl shadow-indigo-300 flex items-center justify-center active:scale-90 transition-all z-40"
-                    >
-                        <Icon name="plus" size={28} />
-                    </button>
-
-                    {/* --- 新增筆記彈窗 (Modal) --- */}
-                    {isModalOpen && (
-                        <div className="fixed inset-0 z-50 flex flex-col bg-white modal-enter overflow-y-auto no-scrollbar">
-                            <header className="sticky top-0 bg-white/95 backdrop-blur-md px-6 py-4 flex justify-between items-center border-b z-10">
-                                <button onClick={() => setIsModalOpen(false)} className="p-2 -ml-2 text-slate-400 active:scale-90 transition-transform">
-                                    <Icon name="chevron-down" size={24} />
-                                </button>
-                                <h2 className="font-black text-lg">新增品飲筆記</h2>
-                                <button onClick={saveRecord} className="text-indigo-600 font-bold text-sm px-4 py-2 bg-indigo-50 rounded-full active:bg-indigo-100 transition-colors">保存</button>
-                            </header>
-
-                            <div className="p-6 space-y-8 pb-12">
-                                {/* 類別切換 */}
-                                <div className="flex bg-slate-100 p-1.5 rounded-2xl w-fit mx-auto">
-                                    {['清酒', '燒酎'].map(t => (
-                                        <button key={t} onClick={() => setCategory(t)} className={`px-8 py-2 rounded-xl text-sm font-bold transition-all ${category === t ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-400'}`}>{t}</button>
-                                    ))}
-                                </div>
-
-                                {/* 照片上傳功能 */}
-                                <section className="flex gap-3 overflow-x-auto no-scrollbar py-2">
-                                    <label className="flex-shrink-0 w-24 h-24 bg-indigo-50 border-2 border-indigo-100 rounded-3xl flex flex-col items-center justify-center text-indigo-600 cursor-pointer active:bg-indigo-100 transition-colors">
-                                        <Icon name="camera" />
-                                        <span className="text-[10px] font-bold mt-1">相機</span>
-                                        <input type="file" className="hidden" accept="image/*" capture="environment" onChange={(e) => handleImageChange(e, 'post')} />
-                                    </label>
-
-                                    <label className="flex-shrink-0 w-24 h-24 bg-slate-50 border-2 border-dashed border-slate-200 rounded-3xl flex flex-col items-center justify-center text-slate-400 cursor-pointer active:bg-slate-100 transition-colors">
-                                        <Icon name="image" />
-                                        <span className="text-[10px] font-bold mt-1">相簿</span>
-                                        <input type="file" className="hidden" accept="image/*" multiple onChange={(e) => handleImageChange(e, 'post')} />
-                                    </label>
-
-                                    {images.map((img, i) => (
-                                        <div key={i} className="flex-shrink-0 w-24 h-24 relative">
-                                            <img src={img} className="w-full h-full object-cover rounded-3xl border border-slate-100 shadow-sm" />
-                                            <button onClick={() => setImages(images.filter((_, idx) => idx !== i))} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 border-2 border-white shadow-sm">
-                                                <Icon name="x" size={10} />
-                                            </button>
-                                        </div>
-                                    ))}
-                                </section>
-
-                                {/* 基本資訊 */}
-                                <section className="grid grid-cols-2 gap-3">
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">酒造名稱</label>
-                                        <input className="w-full bg-slate-50 border-none rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none placeholder-slate-300" placeholder="例如：旭酒造" value={brewery} onChange={e => setBrewery(e.target.value)} />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">銘柄/產品名</label>
-                                        <input className="w-full bg-slate-50 border-none rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none placeholder-slate-300" placeholder="例如：獺祭 45" value={brand} onChange={e => setBrand(e.target.value)} />
-                                    </div>
-                                </section>
-
-                                {category === '燒酎' ? (
-                                    <div className="space-y-8 animate-in fade-in duration-300">
-                                        <div className="space-y-3">
-                                            <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1"><Icon name="layers" size={12}/>風格象限</h2>
-                                            <div className="grid grid-cols-2 gap-2">
-                                                {SHOCHU_DEFAULTS.quadrants.map(q => (
-                                                    <button key={q} onClick={() => toggleItem(q, shochuQuadrants, setShochuQuadrants)} 
-                                                        className={`py-3 rounded-xl text-xs font-bold border-2 transition-all ${shochuQuadrants.includes(q) ? 'bg-indigo-600 border-indigo-600 text-white shadow-md' : 'bg-white border-slate-100 text-slate-500'}`}>{q}</button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                        <div className="space-y-3">
-                                            <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1"><Icon name="tag" size={12}/>風味標籤</h2>
-                                            <div className="flex flex-wrap gap-2">
-                                                {SHOCHU_DEFAULTS.aromas.map(t => (
-                                                    <button key={t} onClick={() => toggleItem(t, selectedTags, setSelectedTags)} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${selectedTags.includes(t) ? 'bg-amber-500 text-white shadow-sm' : 'bg-slate-100 text-slate-500'}`}>{t}</button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-8 animate-in fade-in duration-300">
-                                        <div className="h-56 w-full bg-slate-50 rounded-3xl p-4 flex items-center justify-center border border-slate-100 shadow-inner">
-                                            {RadarChart ? (
-                                                <ResponsiveContainer width="100%" height="100%">
-                                                    <RadarChart data={sakeFlavorData}>
-                                                        <PolarGrid stroke="#e2e8f0" />
-                                                        <PolarAngleAxis dataKey="subject" tick={{ fill: '#64748b', fontSize: 12, fontWeight: 700 }} />
-                                                        <Radar dataKey="A" stroke="#4f46e5" fill="#4f46e5" fillOpacity={0.5} />
-                                                    </RadarChart>
-                                                </ResponsiveContainer>
-                                            ) : <div className="text-slate-300 text-xs font-bold italic">圖表渲染中...</div>}
-                                        </div>
-                                        <div className="space-y-4 px-2">
-                                            {Object.keys(sakeFlavor).map(k => (
-                                                <div key={k} className="flex items-center gap-6">
-                                                    <span className="text-sm font-black text-slate-600 w-6">{k}</span>
-                                                    <input type="range" min="1" max="5" value={sakeFlavor[k]} className="flex-1" onChange={e => setSakeFlavor({...sakeFlavor, [k]: parseInt(e.target.value)})} />
-                                                    <span className="text-xs font-bold text-indigo-600 w-4">{sakeFlavor[k]}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                <div className="pt-4 space-y-4 border-t border-slate-50">
-                                    <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1"><Icon name="pencil" size={12}/>品飲心得筆記</h2>
-                                    <textarea value={note} onChange={e => setNote(e.target.value)} className="w-full h-28 p-4 bg-slate-50 rounded-2xl text-sm border-none focus:ring-2 focus:ring-indigo-500/10 outline-none resize-none shadow-inner placeholder-slate-300" placeholder="這支酒喝起來如何？" />
-                                </div>
-
-                                <div className="pt-4 border-t border-slate-100 space-y-4">
-                                    <div className="flex justify-between items-center">
-                                        <span className="text-sm font-black text-slate-700">綜合星級評分</span>
-                                        <span className="text-xl font-black text-indigo-600">{overallRating}.0</span>
-                                    </div>
-                                    <input type="range" min="1" max="10" value={overallRating} className="w-full" onChange={e => setOverallRating(e.target.value)} />
-                                </div>
-
-                                <button onClick={saveRecord} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-xl shadow-indigo-100 active:scale-95 transition-all mb-4">保存紀錄</button>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* 通知提示 */}
-                    {isSavedNotify && (
-                        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-900/90 backdrop-blur-md text-white px-8 py-3 rounded-full text-[11px] font-bold shadow-2xl z-[80] animate-in fade-in slide-in-from-bottom-2">
-                             ✨ 紀錄已保存
-                        </div>
-                    )}
-                </div>
-            );
-        };
-
-        const renderApp = () => {
-            const container = document.getElementById('root');
-            if (container) {
-                const root = ReactDOM.createRoot(container);
-                root.render(<App />);
-            }
-        };
-
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', renderApp);
+  // 初始化身份驗證 (Rule 3)
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
         } else {
-            renderApp();
+          await signInAnonymously(auth);
         }
+      } catch (error) {
+        console.error("Auth failed", error);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
 
-        if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
-            window.addEventListener('load', () => {
-                try {
-                    const swCode = `
-                        self.addEventListener('install', (e) => self.skipWaiting());
-                        self.addEventListener('activate', (e) => e.waitUntil(clients.claim()));
-                        self.addEventListener('fetch', (e) => {});
-                    `;
-                    const blob = new Blob([swCode], { type: 'application/javascript' });
-                    const swUrl = URL.createObjectURL(blob);
-                    if (window.location.hostname !== 'localhost' && !window.location.hostname.includes('goog')) {
-                        navigator.serviceWorker.register(swUrl).catch(err => {});
-                    }
-                } catch (e) {}
-            });
-        }
-    </script>
-</body>
-</html>
+  // 監聽 Firestore 數據 (Rule 1 & 2)
+  useEffect(() => {
+    if (!user) return;
+    const publicRecordsRef = collection(db, 'artifacts', appId, 'public', 'data', 'records');
+    const unsubscribe = onSnapshot(publicRecordsRef, 
+      (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const sortedData = data.sort((a, b) => b.timestamp - a.timestamp);
+        setRecords(sortedData);
+      },
+      (error) => console.error("Firestore Error:", error)
+    );
+    return () => unsubscribe();
+  }, [user]);
+
+  // 當分類改變時重置風味滑動條
+  useEffect(() => {
+    const initialValues = {};
+    TEMPLATES[category].flavorKeys.forEach((_, i) => initialValues[i] = 3);
+    setFlavorValues(initialValues);
+  }, [category]);
+
+  const saveRecord = async () => {
+    if (!user || !brand) return;
+    setIsUploading(true);
+
+    const newRecord = {
+      userId: user.uid,
+      userName: `飲者 ${user.uid.slice(0, 4)}`,
+      date: new Date().toLocaleDateString(),
+      timestamp: Date.now(),
+      category, brand, brewery, 
+      images, 
+      flavorValues, 
+      note, 
+      overallRating: Number(overallRating)
+    };
+
+    try {
+      const publicRecordsRef = collection(db, 'artifacts', appId, 'public', 'data', 'records');
+      await addDoc(publicRecordsRef, newRecord);
+      setIsModalOpen(false);
+      setIsSavedNotify(true);
+      setTimeout(() => setIsSavedNotify(false), 2000);
+      resetForm();
+    } catch (e) {
+      console.error("Save failed", e);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const resetForm = () => {
+    setBrand(''); setBrewery(''); setImages([]); setNote(''); setOverallRating(5);
+  };
+
+  const handleImageChange = (e) => {
+    const files = Array.from(e.target.files);
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onloadend = () => setImages(prev => [...prev, reader.result]);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const chartData = useMemo(() => {
+    const keys = TEMPLATES[category].flavorKeys;
+    return keys.map((key, i) => ({
+      subject: key,
+      value: flavorValues[i] || 3
+    }));
+  }, [category, flavorValues]);
+
+  return (
+    <div className="max-w-md mx-auto min-h-screen bg-slate-50 relative pb-20 font-sans text-slate-900">
+      {/* 頂部導航 */}
+      <header className="bg-white/80 backdrop-blur-md px-6 py-6 flex justify-between items-end border-b border-slate-100 sticky top-0 z-30">
+        <div>
+          <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-1 flex items-center gap-1">
+            <Globe size={10} className="animate-pulse" /> TasteMaster Social
+          </p>
+          <h1 className="text-2xl font-black text-slate-900">品飲社群</h1>
+        </div>
+        <button onClick={() => setIsProfileOpen(true)} className="w-10 h-10 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400 overflow-hidden border-2 border-white shadow-sm active:scale-90 transition-transform">
+          <User size={20} />
+        </button>
+      </header>
+
+      {/* 動態時報 */}
+      <main className="p-6 space-y-8">
+        {records.length === 0 ? (
+          <div className="py-20 text-center space-y-4">
+            <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mx-auto text-indigo-200">
+                <Clipboard size={32} />
+            </div>
+            <p className="text-sm text-slate-400 font-medium">還沒有人發佈筆記，來開第一瓶吧！</p>
+          </div>
+        ) : (
+          records.map(record => (
+            <div key={record.id} className="bg-white rounded-[32px] overflow-hidden shadow-sm border border-slate-100 animate-in fade-in slide-in-from-bottom-4">
+              {record.images?.[0] && (
+                <div className="w-full h-56 bg-slate-100">
+                  <img src={record.images[0]} className="w-full h-full object-cover" alt="酒款照片" />
+                </div>
+              )}
+              <div className="p-5">
+                <div className="flex justify-between items-start">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-black uppercase bg-${TEMPLATES[record.category]?.color || 'slate'}-50 text-${TEMPLATES[record.category]?.color || 'slate'}-600`}>
+                        {record.category}
+                        </span>
+                        <span className="text-[10px] text-slate-300 font-bold">{record.date}</span>
+                    </div>
+                    <h3 className="text-lg font-black text-slate-800 leading-tight mb-0.5">{record.brand}</h3>
+                    <p className="text-xs text-slate-400 font-medium flex items-center gap-1">
+                        <User size={10} /> {record.userName}
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <div className="flex items-center gap-0.5 text-amber-400 mb-1">
+                        <Star size={14} fill="currentColor"/>
+                        <span className="text-base font-black text-slate-800">{record.overallRating}.0</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <p className="text-sm text-slate-600 mt-3 leading-relaxed">"{record.note}"</p>
+                
+                <div className="mt-4 pt-4 border-t border-slate-50 flex items-center justify-between">
+                   <div className="flex -space-x-2">
+                      {[1,2,3].map(i => <div key={i} className="w-6 h-6 rounded-full bg-slate-100 border-2 border-white" />)}
+                      <span className="pl-4 text-[10px] text-slate-400 font-bold flex items-center">與其他 12 人也喜歡這款</span>
+                   </div>
+                   <button className="text-slate-400 active:scale-90 transition-transform"><Share2 size={16} /></button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </main>
+
+      {/* 底部按鈕 */}
+      <div className="fixed bottom-0 left-0 right-0 p-6 pointer-events-none">
+        <button 
+          onClick={() => setIsModalOpen(true)} 
+          className="w-full h-16 bg-slate-900 text-white rounded-2xl shadow-2xl flex items-center justify-center gap-3 active:scale-95 transition-all pointer-events-auto"
+        >
+          <Plus size={24} />
+          <span className="font-black text-sm tracking-widest">新增品飲筆記</span>
+        </button>
+      </div>
+
+      {/* 新增 Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-white overflow-y-auto no-scrollbar">
+          <header className="sticky top-0 bg-white/90 backdrop-blur-md px-6 py-4 flex justify-between items-center border-b z-10">
+            <button onClick={() => setIsModalOpen(false)} className="p-2 -ml-2 text-slate-400"><ChevronDown size={24} /></button>
+            <h2 className="font-black text-lg">選擇酒類模板</h2>
+            <div className="w-10"></div>
+          </header>
+
+          <div className="p-6 space-y-8 pb-32">
+            {/* 分類選擇卡片 */}
+            <div className="grid grid-cols-2 gap-3">
+              {Object.entries(TEMPLATES).map(([name, config]) => (
+                <button 
+                  key={name} 
+                  onClick={() => setCategory(name)}
+                  className={`p-4 rounded-3xl flex flex-col items-center gap-2 border-2 transition-all ${category === name ? `border-indigo-600 bg-indigo-50 text-indigo-600` : 'border-slate-50 bg-slate-50 text-slate-400'}`}
+                >
+                  <div className={`w-10 h-10 rounded-2xl flex items-center justify-center ${category === name ? 'bg-indigo-600 text-white shadow-lg' : 'bg-white'}`}>
+                    {config.icon}
+                  </div>
+                  <span className="text-xs font-black">{name}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* 照片 */}
+            <section className="flex gap-3 overflow-x-auto no-scrollbar">
+              <label className="flex-shrink-0 w-32 h-32 bg-slate-50 border-2 border-dashed border-slate-200 rounded-[32px] flex flex-col items-center justify-center text-slate-400 cursor-pointer hover:bg-slate-100 transition-colors">
+                <Camera size={24} />
+                <span className="text-[10px] font-bold mt-1 tracking-tighter">拍照或選取</span>
+                <input type="file" className="hidden" accept="image/*" multiple onChange={handleImageChange} />
+              </label>
+              {images.map((img, i) => (
+                <div key={i} className="flex-shrink-0 w-32 h-32 relative">
+                  <img src={img} className="w-full h-full object-cover rounded-[32px]" />
+                  <button onClick={() => setImages(images.filter((_, idx) => idx !== i))} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-1.5 border-2 border-white shadow-lg"><X size={12} /></button>
+                </div>
+              ))}
+            </section>
+
+            {/* 銘柄資訊 */}
+            <div className="space-y-3">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">基本資料</label>
+              <input className="w-full bg-slate-50 border-none rounded-2xl px-5 py-4 text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none shadow-inner" placeholder="這支酒叫什麼名字？ (銘柄)" value={brand} onChange={e => setBrand(e.target.value)} />
+              <input className="w-full bg-slate-50 border-none rounded-2xl px-5 py-4 text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none shadow-inner" placeholder="哪家酒造/酒廠生產的？" value={brewery} onChange={e => setBrewery(e.target.value)} />
+            </div>
+
+            {/* 動態雷達圖 */}
+            <div className="space-y-6">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">{category} 感官指標</label>
+              <div className="h-64 w-full bg-slate-900 rounded-[40px] p-6 shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
+                    <div className="absolute top-[-10%] left-[-10%] w-full h-full bg-indigo-500 blur-[80px]" />
+                </div>
+                <ResponsiveContainer width="100%" height="100%">
+                  <RadarChart data={chartData}>
+                    <PolarGrid stroke="#334155" />
+                    <PolarAngleAxis dataKey="subject" tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 700 }} />
+                    <Radar dataKey="value" stroke="#818cf8" fill="#818cf8" fillOpacity={0.6} />
+                  </RadarChart>
+                </ResponsiveContainer>
+              </div>
+              
+              <div className="space-y-5 px-2">
+                {TEMPLATES[category].flavorKeys.map((key, i) => (
+                  <div key={key} className="flex items-center gap-6">
+                    <span className="text-xs font-black text-slate-500 w-8">{key}</span>
+                    <input 
+                        type="range" min="1" max="5" 
+                        value={flavorValues[i]} 
+                        className="flex-1 accent-indigo-600 h-1 bg-slate-100 rounded-full" 
+                        onChange={e => setFlavorValues({...flavorValues, [i]: parseInt(e.target.value)})} 
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* 心得與評分 */}
+            <div className="space-y-4">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">飲後感</label>
+              <textarea value={note} onChange={e => setNote(e.target.value)} className="w-full h-32 p-5 bg-slate-50 rounded-[32px] text-sm font-medium outline-none resize-none shadow-inner" placeholder="跟大家分享這支酒的味道，或是推薦的配餐..." />
+              
+              <div className={`p-6 rounded-[40px] shadow-xl transition-colors duration-500 bg-slate-900 text-white`}>
+                <div className="flex justify-between items-center mb-6">
+                  <span className="text-xs font-black opacity-60">總體給分</span>
+                  <div className="flex items-center gap-2">
+                    <Star size={20} className="text-amber-400 fill-current" />
+                    <span className="text-3xl font-black">{overallRating}.0</span>
+                  </div>
+                </div>
+                <input type="range" min="1" max="10" value={overallRating} className="w-full accent-amber-400 h-1 bg-slate-700 rounded-full" onChange={e => setOverallRating(e.target.value)} />
+              </div>
+            </div>
+
+            <button 
+                onClick={saveRecord} 
+                disabled={isUploading || !brand}
+                className={`w-full py-5 rounded-[28px] font-black shadow-2xl transition-all flex items-center justify-center gap-2 ${isUploading ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 text-white active:scale-95 shadow-indigo-200'}`}
+            >
+              {isUploading ? '正在上傳到雲端...' : <><Share2 size={18}/> 發佈到社群牆</>}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 存檔通知 */}
+      {isSavedNotify && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-slate-900/95 backdrop-blur-md text-white px-8 py-4 rounded-3xl text-[12px] font-black shadow-2xl z-[80] animate-in zoom-in-95 flex items-center gap-2">
+           <Trophy size={16} className="text-amber-400" /> 筆記已成功上傳雲端！
+        </div>
+      )}
+    </div>
+  );
+}
