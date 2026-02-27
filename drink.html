@@ -171,6 +171,8 @@
                     };
                     reader.readAsDataURL(file);
                 });
+                // 重置 input 以便連續選取相同檔案
+                e.target.value = '';
             };
 
             const toggleItem = (item, list, setter) => {
@@ -300,12 +302,25 @@
                                     ))}
                                 </div>
 
-                                {/* 照片上傳功能更新：支援多選與相機 */}
+                                {/* 照片上傳功能更新：分拆相機與相簿 */}
                                 <section className="flex gap-3 overflow-x-auto no-scrollbar py-2">
-                                    <label className="flex-shrink-0 w-24 h-24 bg-slate-50 border-2 border-dashed border-slate-200 rounded-3xl flex flex-col items-center justify-center text-slate-400 cursor-pointer active:bg-slate-100 transition-colors">
+                                    {/* 1. 直接開啟相機 */}
+                                    <label className="flex-shrink-0 w-24 h-24 bg-indigo-50 border-2 border-indigo-100 rounded-3xl flex flex-col items-center justify-center text-indigo-600 cursor-pointer active:bg-indigo-100 transition-colors">
                                         <Icon name="camera" />
-                                        <span className="text-[10px] font-bold mt-1 text-center px-1">相機或相簿</span>
-                                        {/* 核心變更：加入 multiple 以支援多選照片 */}
+                                        <span className="text-[10px] font-bold mt-1">開啟相機</span>
+                                        <input 
+                                            type="file" 
+                                            className="hidden" 
+                                            accept="image/*" 
+                                            capture="environment" 
+                                            onChange={handleImageChange} 
+                                        />
+                                    </label>
+
+                                    {/* 2. 開啟相簿 (支援多選) */}
+                                    <label className="flex-shrink-0 w-24 h-24 bg-slate-50 border-2 border-dashed border-slate-200 rounded-3xl flex flex-col items-center justify-center text-slate-400 cursor-pointer active:bg-slate-100 transition-colors">
+                                        <Icon name="image" />
+                                        <span className="text-[10px] font-bold mt-1">從相簿多選</span>
                                         <input 
                                             type="file" 
                                             className="hidden" 
@@ -314,6 +329,8 @@
                                             onChange={handleImageChange} 
                                         />
                                     </label>
+
+                                    {/* 已選照片預覽 */}
                                     {images.map((img, i) => (
                                         <div key={i} className="flex-shrink-0 w-24 h-24 relative">
                                             <img src={img} className="w-full h-full object-cover rounded-3xl border border-slate-100 shadow-sm" />
